@@ -41,27 +41,52 @@ def current_submission(token,lid):
     return reviews.open_submission(token,row['id']) if row else None
 
 
-def student_summary(token,sid):
+def student_summary(token, sid):
+    return student_summaries(token, [sid])[sid]
+
+
+def student_summaries(token, student_ids):
+    ids = list(dict.fromkeys(student_ids))
+    result = {}
     with store.connect() as con:
-        user=auth.require(con,token,credits.ROLES)
-        if not con.execute('SELECT 1 FROM students WHERE id=?',(sid,)).fetchone():raise ValueError('学员不存在。')
-        packages=con.execute('''SELECT p.*,c.name coach_name FROM packages p LEFT JOIN coaches c ON c.id=p.coach_id
-          WHERE p.student_id=? AND p.coach_id IS NOT NULL
-          AND NOT EXISTS(SELECT 1 FROM credit_ledger v WHERE v.package_id=p.id AND v.action='void_purchase')''',(sid,)).fetchall()
-        balances={}
-        for p in packages:
-            key=(p['coach_name'],p['kind']);balances[key]=balances.get(key,0)+p['remaining']
-        kinds=sorted({p['kind'] for p in packages})
-        classes=[r[0] for r in con.execute('''SELECT DISTINCT g.name FROM group_reminders g JOIN group_members m ON m.group_id=g.id
-          WHERE m.student_id=? AND g.archived=0 ORDER BY g.name''',(sid,))]
-        assigned=[r[0] for r in con.execute('''SELECT c.name FROM coaches c WHERE c.id IN (
-          SELECT coach_id FROM student_coaches WHERE student_id=?
-          UNION SELECT coach_id FROM packages WHERE student_id=?
-          UNION SELECT coach_id FROM lessons WHERE student_id=? AND archived=0) ORDER BY c.id''',(sid,sid,sid))]
-        return {'coaches':' / '.join(assigned) or '待对接',
-                'purchases':'；'.join(f'{c}·{k}' for c,k in balances) or '未录入',
-                'balance':'；'.join(f'{c}·{k} {n}节' for (c,k),n in balances.items()) or '未录入',
-                'classes':' / '.join(kinds+classes) or '待对接'}
+        auth.require(con, token, credits.ROLES)
+        for offset in range(0, len(ids), 400):
+            batch = ids[offset:offset + 400]
+            marks = ','.join('?' for _ in batch)
+            existing = con.execute(f'SELECT id FROM students WHERE id IN ({marks})', batch)
+            if {row[0] for row in existing} != set(batch):
+                raise ValueError('学员不存在。')
+            balances = {sid: {} for sid in batch}
+            classes = {sid: [] for sid in batch}
+            assigned = {sid: [] for sid in batch}
+            for row in con.execute(f"""SELECT p.student_id,c.name,p.kind,p.remaining FROM packages p
+                    JOIN coaches c ON c.id=p.coach_id WHERE p.student_id IN ({marks})
+                    AND NOT EXISTS (SELECT 1 FROM credit_ledger v WHERE v.package_id=p.id AND v.action='void_purchase')
+                    ORDER BY p.id""", batch):
+                sid, coach, kind, remaining = (row[i] for i in range(4))
+                amounts = balances[sid]
+                amounts[coach, kind] = amounts.get((coach, kind), 0) + remaining
+            for row in con.execute(f"""SELECT DISTINCT m.student_id,g.name FROM group_members m
+                    JOIN group_reminders g ON g.id=m.group_id WHERE m.student_id IN ({marks})
+                    AND g.archived=0 ORDER BY m.student_id,g.name""", batch):
+                classes[row[0]].append(row[1])
+            for row in con.execute(f"""WITH links AS (
+                    SELECT student_id,coach_id FROM student_coaches
+                    UNION SELECT student_id,coach_id FROM packages
+                    UNION SELECT student_id,coach_id FROM lessons WHERE archived=0)
+                    SELECT l.student_id,c.name FROM links l JOIN coaches c ON c.id=l.coach_id
+                    WHERE l.student_id IN ({marks}) ORDER BY l.student_id,c.id""", batch):
+                assigned[row[0]].append(row[1])
+            for sid in batch:
+                amounts = balances[sid]
+                kinds = sorted({kind for coach, kind in amounts})
+                result[sid] = {
+                    'coaches': ' / '.join(assigned[sid]) or '待对接',
+                    'purchases': '；'.join(f'{c}·{k}' for c,k in amounts) or '未录入',
+                    'balance': '；'.join(f'{c}·{k} {n}节' for (c,k),n in amounts.items()) or '未录入',
+                    'classes': ' / '.join(kinds + classes[sid]) or '待对接',
+                }
+    return result
 
 
 def groups(token,start=None,coach_id=None):

@@ -117,11 +117,19 @@ def render(token):
         render_student_accounts(token)
 
 
+def open_registration():
+    st.session_state['ops_navigation'] = '课包管理'
+    st.session_state['open_new_student'] = True
+
+
 def render_student_accounts(token):
     st.subheader('学员账号')
     st.caption('账号私下发给本人，学员输入账号即可进入，无密码。')
     people=svc.list_students(token)
-    if not people:return
+    if not people:
+        st.info('还没有学员。先在课包管理录入学员，再回来生成预约账号。')
+        st.button('去录入新学员', on_click=open_registration)
+        return
     selected=st.selectbox('选择学员',[p['id'] for p in people],format_func=lambda i:next(f"S{p['id']:03d} · {p['name']}" for p in people if p['id']==i),key='ops_calendar_account_sid')
     with store.connect() as con:
         auth.require(con,token,credits.ROLES)

@@ -2,6 +2,7 @@
 Only the few SQL forms used by this app are adapted. Business rules stay shared.
 """
 from contextlib import contextmanager
+from contextvars import ContextVar
 from collections.abc import Mapping
 import os,re
 import sqlite3
@@ -121,10 +122,43 @@ def raw_connection():
         if raw is not None:raw.close()
 
 
+# Only website requests opt into reuse. Maintenance tools retain fresh connections.
+_web_pool = ContextVar('jamie_web_pool', default=None)
+
+
+def new_web_pool():
+    from psycopg import sql
+    from psycopg_pool import ConnectionPool
+    schema = schema_name()
+
+    def configure(raw):
+        raw.execute(sql.SQL('SET search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
+        raw.execute("SET statement_timeout = '20s'")
+        raw.execute("SET lock_timeout = '15s'")
+        raw.commit()
+
+    return ConnectionPool(
+        kwargs=dict(settings(), row_factory=row_factory, prepare_threshold=None),
+        min_size=0, max_size=4, timeout=12, max_idle=120,
+        configure=configure, check=ConnectionPool.check_connection, open=True,
+    )
+
+
+@contextmanager
+def use_web_pool(pool):
+    token = _web_pool.set(pool)
+    try:
+        yield
+    finally:
+        _web_pool.reset(token)
+
+
 @contextmanager
 def connect():
     try:
-        with raw_connection() as raw:yield Connection(raw)
+        pool = _web_pool.get()
+        with (pool.connection() if pool is not None else raw_connection()) as raw:
+            yield Connection(raw)
     except (ValueError,RuntimeError,sqlite3.Error):raise
     except Exception as error:
         import psycopg

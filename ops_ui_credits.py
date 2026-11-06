@@ -11,11 +11,12 @@ from ops_ui_dialogs import open_dialog,close_dialog,success,selected_row
 
 
 def student_rows(token,people):
+    summaries = api.student_summaries(token, [p["id"] for p in people])
     return [{'学员ID':f"S{p['id']:03d}",'称呼':p['name'],'加入时间':p['joined_at'] or '待补充',
-             '对接教练':api.student_summary(token,p['id'])['coaches'],
-             '已购课程':api.student_summary(token,p['id'])['purchases'],
-             '课程余量':api.student_summary(token,p['id'])['balance'],
-             '所在班级 / 类型':api.student_summary(token,p['id'])['classes']} for p in people]
+             '对接教练':summaries[p['id']]['coaches'],
+             '已购课程':summaries[p['id']]['purchases'],
+             '课程余量':summaries[p['id']]['balance'],
+             '所在班级 / 类型':summaries[p['id']]['classes']} for p in people]
 
 
 def render(token):
@@ -23,7 +24,7 @@ def render(token):
     credits.balances(token)  # Enforce role + schema on the server.
     st.subheader('课包管理')
     st.caption('新学员与课时一起录入；已有学员点击名单续课或查看记录。')
-    with st.expander('＋ 新学员 · 录入课时'):
+    with st.expander('＋ 新学员 · 录入课时', expanded=st.session_state.pop('open_new_student', False)):
         registration_form(token)
     search=st.text_input('搜索学员',placeholder='称呼或学员ID',key='ops_ui_credit_search')
     people=svc.list_students(token,search)

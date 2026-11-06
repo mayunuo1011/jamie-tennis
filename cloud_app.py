@@ -15,16 +15,34 @@ def load_settings():
     pg_store.settings();pg_store.schema_name()
 
 
+@st.cache_resource
+def website_pool(database_url, schema):
+    import pg_store
+    pool = pg_store.new_web_pool()
+    try:
+        with pg_store.use_web_pool(pool), pg_store.connect() as con:
+            versions = {r[0] for r in con.execute('SELECT version FROM ops_migrations')}
+            if versions != set(range(1, 8)):
+                raise RuntimeError('数据库版本不匹配。')
+    except Exception:
+        pool.close()
+        raise
+    return pool
+
+
 def run():
     try:
         load_settings()
-        import ops_store as store
-        with store.connect() as con:
-            versions={r[0] for r in con.execute('SELECT version FROM ops_migrations')}
-            if versions!=set(range(1,8)):raise RuntimeError('云端数据尚未完成迁移，请联系维护人员。')
+        import pg_store
+        pool = website_pool(os.environ['JAMIE_DATABASE_URL'], pg_store.schema_name())
     except Exception:
         st.set_page_config(page_title='Jamie Tennis',page_icon='🎾')
         st.title('Jamie Tennis');st.error('网站尚未就绪，请联系维护人员。');return
+    with pg_store.use_web_pool(pool):
+        render_portal()
+
+
+def render_portal():
     portal=st.query_params.get('portal','')
     if portal not in ('staff','student'):
         st.set_page_config(page_title='Jamie Tennis',page_icon='🎾',layout='centered')
