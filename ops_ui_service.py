@@ -89,6 +89,24 @@ def student_summaries(token, student_ids):
     return result
 
 
+def upcoming_courses(token, coach_id=None):
+    now = rules.now_london().replace(tzinfo=None).isoformat()
+    with store.connect() as con:
+        user = auth.require(con, token)
+        coach_id = svc._coach(con, user, coach_id, required=False)
+        condition = ' AND l.coach_id=?' if coach_id is not None else ''
+        args = [now, coach_id] if coach_id is not None else [now]
+        lessons = """SELECT s.name || ' · ' || l.kind AS name, l.starts_at AS start_time,
+                            l.ends_at AS end_time, l.location, 0 AS category, l.id
+                     FROM lessons l JOIN students s ON s.id=l.student_id
+                     WHERE l.archived=0 AND l.status NOT IN ('已取消','已改期') AND l.ends_at>?"""
+        groups = """SELECT l.name || ' · 团课', l.starts_at, l.ends_at, l.location, 1, l.id
+                    FROM group_reminders l WHERE l.archived=0 AND l.ends_at>?"""
+        rows = con.execute(lessons + condition + ' UNION ALL ' + groups + condition
+                           + ' ORDER BY start_time,category,id LIMIT 3', args + args)
+        return [dict(name=r[0], start=r[1], end=r[2], location=r[3]) for r in rows]
+
+
 def groups(token,start=None,coach_id=None):
     with store.connect() as con:
         user=auth.require(con,token)

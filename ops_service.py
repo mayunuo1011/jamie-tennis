@@ -40,13 +40,18 @@ def list_lessons(token, week=None, student_id=None, coach_id=None):
             values.extend([week.isoformat(),(week+timedelta(days=7)).isoformat()])
         if student_id is not None:
             where.append('l.student_id=?');values.append(student_id)
-        sql=f'SELECT {LESSON_COLUMNS} FROM lessons l JOIN students s ON s.id=l.student_id LEFT JOIN coaches c ON c.id=l.coach_id'
-        if where:sql+=' WHERE '+' AND '.join(where)
-        result=[dict(r) for r in con.execute(sql+' ORDER BY l.starts_at,l.id',values)]
-        if credits.calendar_enabled(con):
-            confirmed={r['id']:r['attendance_confirmed'] for r in con.execute('SELECT id,attendance_confirmed FROM lessons')}
-            for row in result:row.update(manual_attendance=True,attendance_confirmed=confirmed[row['id']])
-        for row in result:row['absence_count']=_absence(con,row['student_id'],row['coach_id'])
+        manual = credits.calendar_enabled(con)
+        attendance_column = ',l.attendance_confirmed' if manual else ''
+        scope = ' AND (l.coach_id IS NULL OR a.coach_id=l.coach_id)' if ABSENCE_PER_COACH else ''
+        absence_column = """(SELECT COALESCE(SUM(a.absence),0) FROM lessons a
+                              WHERE a.student_id=l.student_id AND a.archived=0
+                              AND a.kind IN ('私教','陪打')""" + scope + ') AS absence_count'
+        sql = f'SELECT {LESSON_COLUMNS}{attendance_column},{absence_column} FROM lessons l JOIN students s ON s.id=l.student_id LEFT JOIN coaches c ON c.id=l.coach_id'
+        sql += ' WHERE ' + ' AND '.join(where)
+        result = [dict(r) for r in con.execute(sql+' ORDER BY l.starts_at,l.id',values)]
+        if manual:
+            for row in result:
+                row['manual_attendance'] = True
         return result
 
 

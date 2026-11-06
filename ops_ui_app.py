@@ -69,12 +69,10 @@ def status(row):
 
 
 def upcoming_panel(token,service):
-    now=rules.now_london().replace(tzinfo=None)
-    rows=[{'name':r['student_name']+' · '+r['kind'],'start':r['starts_at'],'end':r['ends_at'],'location':r['location']} for r in service.lessons() if r['status'] not in ('已取消','已改期') and datetime.fromisoformat(r['ends_at'])>now]
-    rows += [{'name':r['name']+' · 团课','start':r['starts_at'],'end':r['ends_at'],'location':r['location']} for r in api.groups(token,coach_id=service.coach_id) if datetime.fromisoformat(r['ends_at'])>now]
+    rows = api.upcoming_courses(token, service.coach_id)
     with st.container(border=True,key='ui_upcoming'):
         st.subheader('接下来的课程')
-        for row in sorted(rows,key=lambda r:r['start'])[:3]:
+        for row in rows:
             st.write(row['name']);st.caption(row['start'].replace('T',' ')+'–'+row['end'][11:16]+' · '+row['location'])
         if not rows:st.caption('暂无接下来的课程。')
 
@@ -87,8 +85,9 @@ def weekly(token,service):
     a,b=st.columns(2)
     a.metric('待上课',sum(rules.attendance(r)=='没上' for r in records)+sum(datetime.fromisoformat(r['ends_at'])>rules.now_london().replace(tzinfo=None) for r in groups))
     b.metric('待打卡',sum(rules.attendance(r)=='上了' and not r['checkin_done'] for r in records))
-    listing,actions,exports=st.tabs(['课程清单','课后管理 · 取消 / 改期','导出课后记录'])
-    with listing:
+    section = st.radio('课程操作', ['课程清单','课后管理 · 取消 / 改期','导出课后记录'],
+                       horizontal=True, label_visibility='collapsed', key='weekly_section')
+    if section == '课程清单':
         pick=st.selectbox('状态筛选',['全部','没上','未打卡','已完成'],key='ops_ui_week_status')
         combined=[]
         for row in records:
@@ -126,10 +125,10 @@ def weekly(token,service):
                 else:st.info('先建立学员并由 Jamie 录入课时。')
             if service.user['role'] in credits.ROLES and service.user['coach_id'] is not None and service.coach_id==service.user['coach_id']:
                 with st.expander('＋ 添加团课提醒'):group_form(token)
-    with actions:
+    elif section == '课后管理 · 取消 / 改期':
         if service.can_manage_courses:views.management_page(service,start=start,show_heading=False)
         else:st.info('仅能查看其他教练的安排。取消、改期由任课教练处理；系统管理员可执行有记录的维护。')
-    with exports:
+    else:
         st.subheader('导出课后记录')
         views.export_panel(records,start)
 
